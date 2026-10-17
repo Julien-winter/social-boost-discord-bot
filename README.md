@@ -1,41 +1,41 @@
 # Social Boost Discord Bot
 
-Ein Discord-Bot mit Slash-Commands und einem Nachrichten-Panel. Bestellungen laufen über eine interne Queue; Status, Services und Guthaben werden nur auf Anfrage abgefragt. Ein Rate Limit schützt die API, und Admins können die Queue pausieren, fortsetzen, leeren und einsehen.
+A Discord bot with slash commands and a message panel. Orders pass through an internal queue; services, balances and order statuses are fetched on demand. Rate limits protect the API, and admins can pause, resume, inspect and clear the queue.
 
-Die API-Anbindung verwendet die [PandaBoost API](https://pandaboost.de). Die API-Dokumentation ist unter [pandaboost.de](https://pandaboost.de) erreichbar.
+The API integration uses the [PandaBoost API](https://pandaboost.de). See the [PandaBoost API documentation](https://pandaboost.de) for the provider details.
 
-## API-Key holen
+## Get an API key
 
-1. Bei [pandaboost.de](https://pandaboost.de) anmelden.
-2. Die [Account-Seite](https://pandaboost.de/account) öffnen.
-3. Auf der Account-Seite nach unten zum Abschnitt **API key** scrollen.
-4. Dort **Generate new** klicken. Der neue Schlüssel wird anschließend im API-key-Feld angezeigt.
-5. Den Schlüssel sofort kopieren und nur lokal in `.env` bei `BOOST_API_KEY` eintragen:
+1. Sign in at [pandaboost.de](https://pandaboost.de).
+2. Open the [Account page](https://pandaboost.de/account).
+3. Scroll down to the **API key** section.
+4. Click **Generate new**. The new key appears in the API key field.
+5. Copy it immediately and store it only in `.env` as `BOOST_API_KEY`:
 
 ```env
-BOOST_API_KEY=dein_api_key
+BOOST_API_KEY=your_api_key
 BOOST_API_URL=https://pandaboost.de/api/v2
 ```
 
-Den Schlüssel niemals in GitHub, Screenshots, Logs oder Discord-Nachrichten veröffentlichen. Wenn ein Schlüssel versehentlich geteilt wurde, auf der Account-Seite mit **Generate new** ersetzen.
+Never publish the key in GitHub, screenshots, logs or Discord messages. If it is exposed, use **Generate new** on the Account page to rotate it.
 
-## Start
+## Setup
 
-1. Node.js 20 oder neuer installieren.
-2. `npm install` ausführen.
-3. `.env.example` nach `.env` kopieren und `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` und `BOOST_API_KEY` eintragen.
-4. Den Bot mit den Scopes `bot` und `applications.commands` auf den Server einladen.
-5. Mit `npm start` starten.
+1. Install Node.js 20 or newer.
+2. Run `npm install`.
+3. Copy `.env.example` to `.env` and set `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` and `BOOST_API_KEY`.
+4. Invite the bot with the `bot` and `applications.commands` scopes.
+5. Start it with `npm start`.
 
-Für schnelle Slash-Command-Updates kann `DISCORD_GUILD_ID` gesetzt werden. Ohne diese Variable werden globale Commands registriert, was bei Discord länger dauern kann.
+Set `DISCORD_GUILD_ID` for faster slash-command updates during development. Without it, commands are registered globally and Discord may take longer to publish them.
 
 ## Commands
 
-- `/panel` öffnet das Nachrichten-Panel.
-- `/services`, `/balance`, `/status order:<id>` lesen Informationen aus der API.
-- `/order service:<id> link:<url> quantity:<menge> [runs] [interval]` stellt eine Bestellung in die Queue.
-- `/admin panel|queue|pause|resume|clear` ist nur für IDs in `ADMIN_USER_IDS` oder Rollen in `ADMIN_ROLE_IDS` verfügbar.
+- `/panel` opens the message panel.
+- `/services`, `/balance` and `/status order:<id>` read information from the API.
+- `/order service:<id> link:<url> quantity:<amount> [runs] [interval]` adds an order to the queue.
+- `/admin panel|queue|pause|resume|clear` is restricted to IDs in `ADMIN_USER_IDS` or roles in `ADMIN_ROLE_IDS`.
 
-## Sicherheit
+## Security
 
-Den Testschlüssel nicht committen und nach dem Test im Anbieter-Konto widerrufen oder ändern. Rate Limits, Admin-IDs und API-Schlüssel gehören in `.env` beziehungsweise in den Secret Store des Deployments.
+Do not commit API keys, Discord tokens or `.env` files. Keep secrets in `.env` locally or in your deployment provider's secret store. No live order is submitted during setup.
