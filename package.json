@@ -1,0 +1,17 @@
+{
+  "name": "social-boost-discord-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Discord slash-command bot with a service panel, order queue, status tracking, rate limiting and admin controls.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js && node --check src/apiClient.js && node --check src/queue.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  }
+}
