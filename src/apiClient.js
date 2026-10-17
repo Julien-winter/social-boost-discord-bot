@@ -8,8 +8,8 @@ class BoostApiError extends Error {
 
 class BoostApiClient {
   constructor({ apiKey, apiUrl }) {
-    if (!apiKey) throw new Error('BOOST_API_KEY fehlt.');
-    if (!apiUrl) throw new Error('BOOST_API_URL fehlt.');
+    if (!apiKey) throw new Error('BOOST_API_KEY is missing.');
+    if (!apiUrl) throw new Error('BOOST_API_URL is missing.');
     this.apiKey = apiKey;
     this.apiUrl = apiUrl;
   }
@@ -23,8 +23,8 @@ class BoostApiClient {
     });
     const text = await response.text();
     let payload;
-    try { payload = JSON.parse(text); } catch { throw new BoostApiError('API hat ungültiges JSON geliefert.', text); }
-    if (!response.ok) throw new BoostApiError(`API HTTP-Fehler ${response.status}.`, payload);
+    try { payload = JSON.parse(text); } catch { throw new BoostApiError('The API returned invalid JSON.', text); }
+    if (!response.ok) throw new BoostApiError(`API HTTP error ${response.status}.`, payload);
     if (payload?.error) throw new BoostApiError(payload.error, payload);
     return payload;
   }
