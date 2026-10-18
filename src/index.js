@@ -35,6 +35,10 @@ function allowed(interaction) {
   fresh.push(now); rateBuckets.set(interaction.user.id, fresh); return true;
 }
 function safe(value) { return String(value ?? '').slice(0, 1000); }
+function limitText(value, max = 1900) {
+  const text = String(value ?? '');
+  return text.length <= max ? text : `${text.slice(0, max - 20)}\n…and more items.`;
+}
 function errorText(error) {
   if (error instanceof BoostApiError) return `API error: ${safe(error.message)}`;
   return `Error: ${safe(error.message || error)}`;
@@ -111,7 +115,7 @@ async function registerCommands() {
 function queueText() {
   const items = queue.snapshot().slice(-15);
   if (!items.length) return 'The queue is empty.';
-  return items.map((item) => `\`${item.id.slice(0, 8)}\` · **${item.status}** · User <@${item.userId}>${item.result?.order ? ` · Order ${item.result.order}` : ''}${item.error ? ` · ${safe(item.error)}` : ''}`).join('\n');
+  return limitText(items.map((item) => `\`${item.id.slice(0, 8)}\` · **${item.status}** · User <@${item.userId}>${item.result?.order ? ` · Order ${item.result.order}` : ''}${item.error ? ` · ${safe(item.error)}` : ''}`).join('\n'));
 }
 function orderModal() {
   return new ModalBuilder().setCustomId('order_modal').setTitle('New order').addComponents(
@@ -125,16 +129,28 @@ function orderModal() {
 function statusModal() {
   return new ModalBuilder().setCustomId('status_modal').setTitle('Order status').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('order').setLabel('Order ID').setStyle(TextInputStyle.Short).setRequired(true)));
 }
-async function showServices(interaction) {
+function servicePageRows(page, pageCount) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`panel_services_page_${page - 1}`).setLabel('Previous').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`panel_services_page_${page + 1}`).setLabel(`${page + 1} / ${pageCount}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+    new ButtonBuilder().setCustomId(`panel_services_page_${page + 1}`).setLabel('Next').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= pageCount - 1)
+  );
+}
+async function showServices(interaction, requestedPage = 0) {
   const services = await api.services();
   if (!services.length) return interaction.reply({ content: 'No services found.', flags: MessageFlags.Ephemeral });
-  const fields = services.slice(0, 25).map((service) => ({
-    name: `#${service.service} · ${safe(service.name).slice(0, 230)}`,
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(services.length / pageSize));
+  const page = Math.min(Math.max(Number(requestedPage) || 0, 0), pageCount - 1);
+  const fields = services.slice(page * pageSize, (page + 1) * pageSize).map((service) => ({
+    name: `#${service.service} · ${safe(service.name).slice(0, 90)}`,
     value: `**Category:** ${safe(service.category)}\n**Range:** ${service.min}-${service.max}\n**Rate:** ${service.rate}${service.refill ? ' · 🔁 Refill' : ''}${service.cancel ? ' · ✖️ Cancel' : ''}`,
     inline: true
   }));
-  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Available services').setDescription(`Showing ${fields.length} of ${services.length} services. Use /order with the service ID.`).addFields(fields).setFooter({ text: 'Rates and availability come from the API.' });
-  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Available services').setDescription(`Showing services ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, services.length)} of ${services.length}. Use /order with the service ID.`).addFields(fields).setFooter({ text: 'Rates and availability come from the API.' });
+  const payload = { embeds: [embed], components: [servicePageRows(page, pageCount)] };
+  if (interaction.isButton()) await interaction.update(payload);
+  else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
 }
 async function createOrder(interaction, order) {
   if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
@@ -167,6 +183,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.isButton()) {
       if (interaction.customId === 'panel_services') return showServices(interaction);
+      if (interaction.customId.startsWith('panel_services_page_')) return showServices(interaction, Number(interaction.customId.split('_').pop()));
       if (interaction.customId === 'panel_order') return interaction.showModal(orderModal());
       if (interaction.customId === 'panel_status') return interaction.showModal(statusModal());
       if (interaction.customId === 'panel_balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
