@@ -38,7 +38,8 @@ function orderCost(rate, quantity, runs = 1, { divisor = 1000, profitPercent = 0
 }
 
 function formatQuantity(value) {
-  return Number(value).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toLocaleString('en-US', { maximumFractionDigits: 0 }) : 'n/a';
 }
 
 function formatMoney(value, currency = 'USD') {
