@@ -2,13 +2,14 @@ const { randomUUID } = require('node:crypto');
 const EventEmitter = require('node:events');
 
 class OrderQueue extends EventEmitter {
-  constructor(api, { concurrency = 1 } = {}) {
+  constructor(api, { concurrency = 1, onFailed } = {}) {
     super();
     this.api = api;
     this.concurrency = Math.max(1, Number(concurrency) || 1);
     this.items = [];
     this.running = 0;
     this.paused = false;
+    this.onFailed = onFailed;
   }
 
   enqueue(payload) {
@@ -51,6 +52,9 @@ class OrderQueue extends EventEmitter {
     } catch (error) {
       item.status = 'failed';
       item.error = error.message;
+      if (item.reservationId && this.onFailed) {
+        try { await this.onFailed(item); } catch (refundError) { item.refundError = refundError.message; }
+      }
       item.finishedAt = new Date().toISOString();
       this.emit('failed', item);
     }
