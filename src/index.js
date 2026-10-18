@@ -40,25 +40,39 @@ function errorText(error) {
   return `Error: ${safe(error.message || error)}`;
 }
 function panelEmbed() {
-  return new EmbedBuilder().setColor(0x5865f2).setTitle('Service Panel')
-    .setDescription('Use the buttons or slash commands to browse services, place orders and check status.')
-    .setFooter({ text: 'Administration and limits are configured on the server.' });
+  return new EmbedBuilder()
+    .setColor(0x7c5cff)
+    .setAuthor({ name: 'Social Boost Center', iconURL: client.user?.displayAvatarURL() })
+    .setTitle('🚀 Start here')
+    .setDescription('Everything you need is one click away.\n\n**1 · Browse** services\n**2 · Create** an order\n**3 · Track** your order\n**4 · Check** your balance')
+    .addFields(
+      { name: '📦 Services', value: 'See available services, limits and rates.', inline: true },
+      { name: '🛒 Orders', value: 'Create an order through the protected queue.', inline: true },
+      { name: '🛡️ Protected', value: `Rate limit: ${config.rateMax} requests / ${Math.round(config.rateWindowMs / 1000)}s`, inline: true }
+    )
+    .setFooter({ text: 'Need help? Use /services, /order, /status or /balance.' });
 }
 function panelRows() {
-  return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('panel_services').setLabel('Services').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel_order').setLabel('Place order').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('panel_status').setLabel('Status').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('panel_balance').setLabel('Balance').setStyle(ButtonStyle.Secondary)
-  )];
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('panel_services').setLabel('Browse services').setEmoji('📦').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_order').setLabel('Create order').setEmoji('🛒').setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('panel_status').setLabel('Track order').setEmoji('🔎').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_balance').setLabel('Check balance').setEmoji('💰').setStyle(ButtonStyle.Secondary)
+    )
+  ];
 }
 function adminRows() {
-  return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('admin_pause').setLabel('Pause queue').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('admin_resume').setLabel('Resume queue').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId('admin_queue').setLabel('Show queue').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('admin_clear').setLabel('Clear failed').setStyle(ButtonStyle.Danger)
-  )];
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('admin_pause').setLabel('Pause queue').setEmoji('⏸️').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('admin_resume').setLabel('Resume queue').setEmoji('▶️').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('admin_queue').setLabel('View queue').setEmoji('📋').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('admin_clear').setLabel('Clear failed').setEmoji('🧹').setStyle(ButtonStyle.Danger)
+    )
+  ];
 }
 
 const commands = [
@@ -83,7 +97,16 @@ const commands = [
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(config.token);
   const route = config.guildId ? Routes.applicationGuildCommands(config.clientId, config.guildId) : Routes.applicationCommands(config.clientId);
-  await rest.put(route, { body: commands });
+  try {
+    await rest.put(route, { body: commands });
+    console.log(config.guildId ? `Registered commands in guild ${config.guildId}.` : 'Registered global commands.');
+  } catch (error) {
+    if (error?.code === 50001 || error?.status === 403) {
+      console.error('Could not register slash commands: Discord returned Missing Access. Check that DISCORD_CLIENT_ID belongs to this bot and that the bot was invited to DISCORD_GUILD_ID with the applications.commands scope.');
+    } else {
+      console.error('Could not register slash commands:', error);
+    }
+  }
 }
 function queueText() {
   const items = queue.snapshot().slice(-15);
@@ -117,6 +140,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await registerCommands();
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
+client.on(Events.Error, (error) => console.error('Discord client error:', error));
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -128,7 +152,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'admin') {
         if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', ephemeral: true });
         const sub = interaction.options.getSubcommand();
-        if (sub === 'panel') return interaction.reply({ embeds: [new EmbedBuilder().setTitle('Admin Panel').setColor(0xed4245).setDescription('Manage the queue and bot operating state.')], components: adminRows(), ephemeral: true });
+        if (sub === 'panel') return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle('🛠️ Admin control center').setDescription('Manage queue flow and failed items. These controls are restricted to configured admins.').addFields({ name: 'Queue status', value: queue.paused ? '⏸️ Paused' : '▶️ Running', inline: true }, { name: 'Items', value: String(queue.snapshot().length), inline: true })], components: adminRows(), ephemeral: true });
         if (sub === 'queue') return interaction.reply({ content: queueText(), ephemeral: true });
         if (sub === 'pause') { queue.pause(); return interaction.reply({ content: 'Queue paused.', ephemeral: true }); }
         if (sub === 'resume') { queue.resume(); return interaction.reply({ content: 'Queue resumed.', ephemeral: true }); }
