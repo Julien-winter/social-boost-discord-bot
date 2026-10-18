@@ -151,8 +151,14 @@ function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery) {
   ];
 }
 async function showServices(interaction, requestedPage = 0) {
+  const isPrivateReply = interaction.isChatInputCommand()
+    || (interaction.isButton() && interaction.customId === 'panel_services')
+    || (interaction.isModalSubmit() && interaction.customId === 'services_search_modal');
+  if (isPrivateReply) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  else await interaction.deferUpdate();
+
   const services = await api.services();
-  if (!services.length) return interaction.reply({ content: 'No services found.', flags: MessageFlags.Ephemeral });
+  if (!services.length) return interaction.editReply({ content: 'No services found.', embeds: [], components: [] });
   const categories = [...new Set(services.map((service) => String(service.category || 'Other')).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const view = serviceViews.get(interaction.user.id) || { categoryIndex: null, query: '' };
   const selectedCategory = view.categoryIndex === null ? null : categories[view.categoryIndex];
@@ -176,14 +182,9 @@ async function showServices(interaction, requestedPage = 0) {
     : `**${filterLabel}**\nNo matching services. Try another category or search term.`;
   const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Service browser').setDescription(description).addFields(fields).setFooter({ text: `${services.length} total services · 🔁 refill · ✖️ cancel` });
   const payload = { embeds: [embed], components: servicePageRows(page, pageCount, categories, view.categoryIndex, Boolean(query)) };
-  // Keep the public launcher message untouched. Every service view opened from
-  // its button is private to the clicking user; later filter and pagination
-  // interactions update that private message in place.
-  if ((interaction.isButton() && interaction.customId !== 'panel_services') || interaction.isStringSelectMenu()) {
-    await interaction.update(payload);
-  } else {
-    await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
-  }
+  // The initial browser is private. Later filters and pagination edit that
+  // private response after acknowledging the interaction immediately.
+  await interaction.editReply(payload);
 }
 function servicesSearchModal() {
   return new ModalBuilder().setCustomId('services_search_modal').setTitle('Search services').addComponents(
@@ -194,6 +195,16 @@ async function createOrder(interaction, order) {
   if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
   const item = queue.enqueue({ userId: interaction.user.id, order });
   await interaction.reply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\``, flags: MessageFlags.Ephemeral });
+}
+async function showBalance(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const result = await api.balance();
+  return interaction.editReply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**` });
+}
+async function showStatus(interaction, order) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const result = await api.orderStatus(order);
+  return interaction.editReply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}` });
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -206,8 +217,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'panel') return interaction.reply({ embeds: [panelEmbed()], components: panelRows() });
       if (interaction.commandName === 'services') return showServices(interaction);
-      if (interaction.commandName === 'balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
-      if (interaction.commandName === 'status') { const result = await api.orderStatus(interaction.options.getString('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, flags: MessageFlags.Ephemeral }); }
+      if (interaction.commandName === 'balance') return showBalance(interaction);
+      if (interaction.commandName === 'status') return showStatus(interaction, interaction.options.getString('order'));
       if (interaction.commandName === 'order') return createOrder(interaction, { service: interaction.options.getInteger('service'), link: interaction.options.getString('link'), quantity: interaction.options.getInteger('quantity'), runs: interaction.options.getInteger('runs'), interval: interaction.options.getInteger('interval') });
       if (interaction.commandName === 'admin') {
         if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', flags: MessageFlags.Ephemeral });
@@ -227,7 +238,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId.startsWith('services_page_next_')) return showServices(interaction, Number(interaction.customId.split('_').pop()) + 1);
       if (interaction.customId === 'panel_order') return interaction.showModal(orderModal());
       if (interaction.customId === 'panel_status') return interaction.showModal(statusModal());
-      if (interaction.customId === 'panel_balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
+      if (interaction.customId === 'panel_balance') return showBalance(interaction);
       if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', flags: MessageFlags.Ephemeral });
       if (interaction.customId === 'admin_pause') { queue.pause(); return interaction.update({ content: 'Queue paused.', embeds: [], components: adminRows() }); }
       if (interaction.customId === 'admin_resume') { queue.resume(); return interaction.update({ content: 'Queue resumed.', embeds: [], components: adminRows() }); }
@@ -245,7 +256,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!Number.isInteger(number('service')) || !Number.isInteger(quantity) || quantity < 1) return interaction.reply({ content: 'Service ID and quantity must be valid numbers.', flags: MessageFlags.Ephemeral });
       return createOrder(interaction, { service: number('service'), link: interaction.fields.getTextInputValue('link'), quantity, runs: number('runs') || undefined, interval: number('interval') || undefined });
     }
-    if (interaction.isModalSubmit() && interaction.customId === 'status_modal') { const result = await api.orderStatus(interaction.fields.getTextInputValue('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, flags: MessageFlags.Ephemeral }); }
+    if (interaction.isModalSubmit() && interaction.customId === 'status_modal') return showStatus(interaction, interaction.fields.getTextInputValue('order'));
     if (interaction.isModalSubmit() && interaction.customId === 'services_search_modal') {
       serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || { categoryIndex: null }), query: interaction.fields.getTextInputValue('query') || '' });
       return showServices(interaction);
