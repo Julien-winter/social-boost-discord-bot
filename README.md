@@ -17,6 +17,8 @@ BOOST_API_KEY=your_api_key
 BOOST_API_URL=https://pandaboost.de/api/v2
 ```
 
+Do not leave `BOOST_API_URL=https://your-provider.example/api/v2` in `.env`; that value is only a placeholder and causes `ENOTFOUND your-provider.example`.
+
 Never publish the key in GitHub, screenshots, logs or Discord messages. If it is exposed, use **Generate new** on the Account page to rotate it.
 
 ## Setup
