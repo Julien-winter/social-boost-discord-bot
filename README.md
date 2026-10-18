@@ -29,6 +29,8 @@ Never publish the key in GitHub, screenshots, logs or Discord messages. If it is
 
 Set `DISCORD_GUILD_ID` for faster slash-command updates during development. Without it, commands are registered globally and Discord may take longer to publish them.
 
+If startup reports `Missing Access`, verify that `DISCORD_CLIENT_ID` is the Application ID for the same bot token, that `DISCORD_GUILD_ID` is the correct server ID, and that the bot was invited to that server with both `bot` and `applications.commands` scopes. The bot now stays online and logs this diagnosis instead of crashing.
+
 ## Commands
 
 - `/panel` opens the message panel.
