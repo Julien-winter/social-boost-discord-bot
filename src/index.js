@@ -1,7 +1,7 @@
 require('dotenv').config();
 const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, EmbedBuilder,
-  Events, GatewayIntentBits, ModalBuilder, REST, Routes, SlashCommandBuilder,
+  Events, GatewayIntentBits, MessageFlags, ModalBuilder, REST, Routes, SlashCommandBuilder,
   StringSelectMenuBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
 const { BoostApiClient, BoostApiError } = require('./apiClient');
@@ -127,13 +127,19 @@ function statusModal() {
 }
 async function showServices(interaction) {
   const services = await api.services();
-  const lines = services.slice(0, 25).map((service) => `**${service.service} · ${safe(service.name)}**\n${safe(service.category)} · ${service.min}-${service.max} · Rate ${service.rate}`);
-  await interaction.reply({ content: lines.join('\n\n') || 'No services found.', ephemeral: true });
+  if (!services.length) return interaction.reply({ content: 'No services found.', flags: MessageFlags.Ephemeral });
+  const fields = services.slice(0, 25).map((service) => ({
+    name: `#${service.service} · ${safe(service.name).slice(0, 230)}`,
+    value: `**Category:** ${safe(service.category)}\n**Range:** ${service.min}-${service.max}\n**Rate:** ${service.rate}${service.refill ? ' · 🔁 Refill' : ''}${service.cancel ? ' · ✖️ Cancel' : ''}`,
+    inline: true
+  }));
+  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Available services').setDescription(`Showing ${fields.length} of ${services.length} services. Use /order with the service ID.`).addFields(fields).setFooter({ text: 'Rates and availability come from the API.' });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 async function createOrder(interaction, order) {
-  if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', ephemeral: true });
+  if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
   const item = queue.enqueue({ userId: interaction.user.id, order });
-  await interaction.reply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\``, ephemeral: true });
+  await interaction.reply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\``, flags: MessageFlags.Ephemeral });
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -146,42 +152,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'panel') return interaction.reply({ embeds: [panelEmbed()], components: panelRows() });
       if (interaction.commandName === 'services') return showServices(interaction);
-      if (interaction.commandName === 'balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, ephemeral: true }); }
-      if (interaction.commandName === 'status') { const result = await api.orderStatus(interaction.options.getString('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, ephemeral: true }); }
+      if (interaction.commandName === 'balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
+      if (interaction.commandName === 'status') { const result = await api.orderStatus(interaction.options.getString('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, flags: MessageFlags.Ephemeral }); }
       if (interaction.commandName === 'order') return createOrder(interaction, { service: interaction.options.getInteger('service'), link: interaction.options.getString('link'), quantity: interaction.options.getInteger('quantity'), runs: interaction.options.getInteger('runs'), interval: interaction.options.getInteger('interval') });
       if (interaction.commandName === 'admin') {
-        if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', ephemeral: true });
+        if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', flags: MessageFlags.Ephemeral });
         const sub = interaction.options.getSubcommand();
-        if (sub === 'panel') return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle('🛠️ Admin control center').setDescription('Manage queue flow and failed items. These controls are restricted to configured admins.').addFields({ name: 'Queue status', value: queue.paused ? '⏸️ Paused' : '▶️ Running', inline: true }, { name: 'Items', value: String(queue.snapshot().length), inline: true })], components: adminRows(), ephemeral: true });
-        if (sub === 'queue') return interaction.reply({ content: queueText(), ephemeral: true });
-        if (sub === 'pause') { queue.pause(); return interaction.reply({ content: 'Queue paused.', ephemeral: true }); }
-        if (sub === 'resume') { queue.resume(); return interaction.reply({ content: 'Queue resumed.', ephemeral: true }); }
-        if (sub === 'clear') { queue.clear(); return interaction.reply({ content: 'Failed items removed.', ephemeral: true }); }
+        if (sub === 'panel') return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle('🛠️ Admin control center').setDescription('Manage queue flow and failed items. These controls are restricted to configured admins.').addFields({ name: 'Queue status', value: queue.paused ? '⏸️ Paused' : '▶️ Running', inline: true }, { name: 'Items', value: String(queue.snapshot().length), inline: true })], components: adminRows(), flags: MessageFlags.Ephemeral });
+        if (sub === 'queue') return interaction.reply({ content: queueText(), flags: MessageFlags.Ephemeral });
+        if (sub === 'pause') { queue.pause(); return interaction.reply({ content: 'Queue paused.', flags: MessageFlags.Ephemeral }); }
+        if (sub === 'resume') { queue.resume(); return interaction.reply({ content: 'Queue resumed.', flags: MessageFlags.Ephemeral }); }
+        if (sub === 'clear') { queue.clear(); return interaction.reply({ content: 'Failed items removed.', flags: MessageFlags.Ephemeral }); }
       }
     }
     if (interaction.isButton()) {
       if (interaction.customId === 'panel_services') return showServices(interaction);
       if (interaction.customId === 'panel_order') return interaction.showModal(orderModal());
       if (interaction.customId === 'panel_status') return interaction.showModal(statusModal());
-      if (interaction.customId === 'panel_balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, ephemeral: true }); }
-      if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', ephemeral: true });
+      if (interaction.customId === 'panel_balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
+      if (!isAdmin(interaction)) return interaction.reply({ content: 'You do not have permission to use this.', flags: MessageFlags.Ephemeral });
       if (interaction.customId === 'admin_pause') { queue.pause(); return interaction.update({ content: 'Queue paused.', embeds: [], components: adminRows() }); }
       if (interaction.customId === 'admin_resume') { queue.resume(); return interaction.update({ content: 'Queue resumed.', embeds: [], components: adminRows() }); }
-      if (interaction.customId === 'admin_queue') return interaction.reply({ content: queueText(), ephemeral: true });
+      if (interaction.customId === 'admin_queue') return interaction.reply({ content: queueText(), flags: MessageFlags.Ephemeral });
       if (interaction.customId === 'admin_clear') { queue.clear(); return interaction.update({ content: 'Failed items removed.', embeds: [], components: adminRows() }); }
     }
     if (interaction.isModalSubmit() && interaction.customId === 'order_modal') {
       const number = (id) => Number(interaction.fields.getTextInputValue(id));
       const quantity = number('quantity');
-      if (!Number.isInteger(number('service')) || !Number.isInteger(quantity) || quantity < 1) return interaction.reply({ content: 'Service ID and quantity must be valid numbers.', ephemeral: true });
+      if (!Number.isInteger(number('service')) || !Number.isInteger(quantity) || quantity < 1) return interaction.reply({ content: 'Service ID and quantity must be valid numbers.', flags: MessageFlags.Ephemeral });
       return createOrder(interaction, { service: number('service'), link: interaction.fields.getTextInputValue('link'), quantity, runs: number('runs') || undefined, interval: number('interval') || undefined });
     }
-    if (interaction.isModalSubmit() && interaction.customId === 'status_modal') { const result = await api.orderStatus(interaction.fields.getTextInputValue('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, ephemeral: true }); }
+    if (interaction.isModalSubmit() && interaction.customId === 'status_modal') { const result = await api.orderStatus(interaction.fields.getTextInputValue('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, flags: MessageFlags.Ephemeral }); }
   } catch (error) {
     console.error(error);
     const content = errorText(error);
-    if (interaction.replied || interaction.deferred) await interaction.followUp({ content, ephemeral: true });
-    else await interaction.reply({ content, ephemeral: true });
+    if (interaction.replied || interaction.deferred) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+    else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
   }
 });
 
