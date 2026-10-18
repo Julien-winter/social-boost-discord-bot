@@ -176,8 +176,14 @@ async function showServices(interaction, requestedPage = 0) {
     : `**${filterLabel}**\nNo matching services. Try another category or search term.`;
   const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Service browser').setDescription(description).addFields(fields).setFooter({ text: `${services.length} total services · 🔁 refill · ✖️ cancel` });
   const payload = { embeds: [embed], components: servicePageRows(page, pageCount, categories, view.categoryIndex, Boolean(query)) };
-  if (interaction.isButton() || interaction.isStringSelectMenu()) await interaction.update(payload);
-  else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  // Keep the public launcher message untouched. Every service view opened from
+  // its button is private to the clicking user; later filter and pagination
+  // interactions update that private message in place.
+  if ((interaction.isButton() && interaction.customId !== 'panel_services') || interaction.isStringSelectMenu()) {
+    await interaction.update(payload);
+  } else {
+    await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  }
 }
 function servicesSearchModal() {
   return new ModalBuilder().setCustomId('services_search_modal').setTitle('Search services').addComponents(
