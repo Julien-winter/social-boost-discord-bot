@@ -84,7 +84,9 @@ function panelRows() {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('panel_status').setLabel('Track order').setEmoji('🔎').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('panel_deposit').setLabel('Add credits').setEmoji('₿').setStyle(ButtonStyle.Success)
+      // Use a standard Unicode emoji. The Bitcoin sign (₿) is a text symbol,
+      // not a Discord-valid emoji name, so Discord rejects the whole panel.
+      new ButtonBuilder().setCustomId('panel_deposit').setLabel('Add credits').setEmoji('💰').setStyle(ButtonStyle.Success)
     )
   ];
 }
