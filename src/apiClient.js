@@ -10,6 +10,15 @@ class BoostApiClient {
   constructor({ apiKey, apiUrl }) {
     if (!apiKey) throw new Error('BOOST_API_KEY is missing.');
     if (!apiUrl) throw new Error('BOOST_API_URL is missing.');
+    if (apiUrl.includes('your-provider.example')) {
+      throw new Error('BOOST_API_URL still uses the example placeholder. Set it to the real API endpoint, for example https://pandaboost.de/api/v2.');
+    }
+    try {
+      const parsedUrl = new URL(apiUrl);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('Unsupported protocol');
+    } catch {
+      throw new Error('BOOST_API_URL must be a valid HTTP or HTTPS URL.');
+    }
     this.apiKey = apiKey;
     this.apiUrl = apiUrl;
   }

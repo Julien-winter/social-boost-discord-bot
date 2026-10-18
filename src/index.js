@@ -177,6 +177,10 @@ function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery) {
   ];
 }
 async function showServices(interaction, requestedPage = 0) {
+  if (!allowed(interaction)) {
+    if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
+    return;
+  }
   const isPrivateReply = interaction.isChatInputCommand()
     || (interaction.isButton() && interaction.customId === 'panel_services')
     || (interaction.isModalSubmit() && interaction.customId === 'services_search_modal');
@@ -237,11 +241,13 @@ async function createOrder(interaction, order) {
   await interaction.editReply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\`\nReserved **${reservation.amount.toFixed(2)} ${config.creditCurrency}** · Remaining credits: **${reservation.balance.toFixed(2)} ${config.creditCurrency}**` });
 }
 async function showBalance(interaction) {
+  if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const result = await api.balance();
   return interaction.editReply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**` });
 }
 async function showStatus(interaction, order) {
+  if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const result = await api.orderStatus(order);
   return interaction.editReply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}` });
@@ -252,9 +258,11 @@ async function showCredits(interaction) {
   return interaction.editReply({ content: `Your credit balance: **${balance.toFixed(2)} ${config.creditCurrency}**\nUse **/deposit amount:<amount>** to add credits with crypto.` });
 }
 async function createDeposit(interaction, amount) {
+  if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   if (!cryptoProvider) return interaction.editReply({ content: 'Crypto deposits are not configured yet. Set CRYPTO_API_KEY, CRYPTO_IPN_SECRET and CRYPTO_CALLBACK_URL on the bot server.' });
   if (!config.cryptoCallbackUrl) return interaction.editReply({ content: 'Crypto deposits are unavailable because CRYPTO_CALLBACK_URL is missing.' });
+  if (!config.cryptoCallbackUrl.startsWith('https://')) return interaction.editReply({ content: 'Crypto deposits require an HTTPS CRYPTO_CALLBACK_URL so payment notifications can be verified securely.' });
   const deposit = await credits.createDeposit(interaction.user.id, amount, { payCurrency: process.env.CRYPTO_PAY_CURRENCY || 'usdttrc20' });
   const payment = await cryptoProvider.createPayment({ amount: deposit.amount, payCurrency: deposit.payCurrency, orderId: deposit.id, callbackUrl: config.cryptoCallbackUrl });
   const providerPaymentId = payment.payment_id || payment.id;
@@ -273,7 +281,13 @@ function startCryptoWebhook() {
       try {
         if (!cryptoProvider.verifyIpnSignature(rawBody, request.headers['x-nowpayments-sig'])) { response.writeHead(401); return response.end('Invalid signature'); }
         const payload = JSON.parse(rawBody.toString('utf8'));
-        const result = await credits.completeDeposit({ depositId: payload.order_id, providerPaymentId: payload.payment_id, status: payload.payment_status, actualAmount: payload.price_amount || payload.pay_amount });
+        const result = await credits.completeDeposit({
+          depositId: payload.order_id,
+          providerPaymentId: payload.payment_id,
+          status: payload.payment_status,
+          actualAmount: payload.price_amount,
+          actualPayAmount: payload.actually_paid ?? payload.pay_amount
+        });
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ ok: true, ...result }));
       } catch (error) {
@@ -355,8 +369,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (isUnknownInteraction(error)) return;
     console.error(error);
     const content = errorText(error);
-    if (interaction.replied || interaction.deferred) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
-    else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    try {
+      if (interaction.replied || interaction.deferred) await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+      else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    } catch (replyError) {
+      if (!isUnknownInteraction(replyError)) console.error('Could not send interaction error response:', replyError);
+    }
   }
 });
 

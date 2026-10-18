@@ -22,7 +22,12 @@ class OrderQueue extends EventEmitter {
 
   pause() { this.paused = true; this.emit('changed'); }
   resume() { this.paused = false; this.#drain(); this.emit('changed'); }
-  clear() { this.items = this.items.filter((item) => item.status === 'processing'); this.emit('changed'); }
+  clear() {
+    // Only failed items are disposable. Keep queued, processing and completed
+    // records so users can still track their tickets and refunds stay auditable.
+    this.items = this.items.filter((item) => item.status !== 'failed');
+    this.emit('changed');
+  }
   snapshot() { return this.items.map((item) => ({ ...item })); }
   find(id) { return this.items.find((item) => item.id === id); }
 

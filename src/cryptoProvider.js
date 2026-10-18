@@ -18,10 +18,15 @@ class NowPaymentsProvider {
   }
 
   async request(path, options = {}) {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: { 'x-api-key': this.apiKey, 'content-type': 'application/json', ...(options.headers || {}) }
-    });
+    let response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers: { 'x-api-key': this.apiKey, 'content-type': 'application/json', ...(options.headers || {}) }
+      });
+    } catch (error) {
+      throw new CryptoProviderError(`Crypto provider request failed: ${error.message}`, undefined, undefined);
+    }
     const text = await response.text();
     let payload;
     try { payload = JSON.parse(text); } catch { payload = { raw: text }; }

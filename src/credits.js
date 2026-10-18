@@ -70,6 +70,7 @@ class CreditStore {
     return this.#mutate((state) => {
       const existing = state.ledger.find((entry) => entry.id === reservationId && entry.type === 'reserve');
       if (!existing) return { refunded: false, balance: this.getBalance(userId) };
+      if (existing.userId !== String(userId)) throw new Error('Reservation belongs to a different user.');
       if (state.ledger.some((entry) => entry.type === 'refund' && entry.metadata?.reservationId === reservationId)) return { refunded: false, balance: this.getBalance(userId) };
       const key = String(userId);
       const user = state.users[key] || { balance: 0 };
@@ -95,7 +96,10 @@ class CreditStore {
     return this.#mutate((state) => {
       const deposit = state.deposits[depositId];
       if (!deposit) throw new Error('Deposit not found.');
-      deposit.providerPaymentId = String(providerPaymentId);
+      const providerId = String(providerPaymentId);
+      const duplicate = Object.values(state.deposits).find((item) => item.id !== depositId && item.providerPaymentId === providerId);
+      if (duplicate) throw new Error('Provider payment is already linked to another deposit.');
+      deposit.providerPaymentId = providerId;
       Object.assign(deposit, details);
       return { ...deposit };
     });
@@ -106,17 +110,23 @@ class CreditStore {
     return deposit ? { ...deposit } : null;
   }
 
-  async completeDeposit({ depositId, providerPaymentId, status, actualAmount }) {
+  async completeDeposit({ depositId, providerPaymentId, status, actualAmount, actualPayAmount }) {
     return this.#mutate((state) => {
       const deposit = Object.values(state.deposits).find((item) => item.id === depositId || (providerPaymentId && item.providerPaymentId === String(providerPaymentId)));
       if (!deposit) throw new Error('Deposit not found.');
+      if (providerPaymentId && deposit.providerPaymentId && deposit.providerPaymentId !== String(providerPaymentId)) throw new Error('Provider payment does not match the deposit.');
       if (deposit.status === 'credited') return { credited: false, duplicate: true, balance: this.getBalance(deposit.userId) };
       deposit.status = String(status || '').toLowerCase();
       const paid = Number(actualAmount);
+      const paidCrypto = Number(actualPayAmount);
       const successful = ['confirmed', 'finished', 'complete', 'completed'].includes(deposit.status);
-      if (!successful || !Number.isFinite(paid) || paid + 1e-8 < deposit.amount) {
+      const expectedCrypto = Number(deposit.payAmount);
+      const hasCryptoAmounts = Number.isFinite(expectedCrypto) && expectedCrypto > 0;
+      const underpaidCrypto = hasCryptoAmounts && (!Number.isFinite(paidCrypto) || paidCrypto + 1e-8 < expectedCrypto);
+      const underpaidFiat = !hasCryptoAmounts && (!Number.isFinite(paid) || paid + 1e-8 < deposit.amount);
+      if (!successful || underpaidCrypto || underpaidFiat) {
         this.#persist();
-        return { credited: false, pending: successful && paid < deposit.amount, balance: this.getBalance(deposit.userId) };
+        return { credited: false, pending: successful && (underpaidCrypto || underpaidFiat), balance: this.getBalance(deposit.userId) };
       }
       const user = state.users[deposit.userId] || { balance: 0 };
       user.balance = money(user.balance + deposit.amount);
