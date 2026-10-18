@@ -2,7 +2,7 @@
 
 A Discord bot with slash commands and a message panel. Orders pass through an internal queue; services, balances and order statuses are fetched on demand. Rate limits protect the API, and admins can pause, resume, inspect and clear the queue.
 
-Each Discord user has a separate persistent credit balance. Orders reserve credits before entering the queue and automatically refund them if the provider rejects the order. Crypto deposits are optional and use NOWPayments IPN signature verification; the bot never credits a payment from an unsigned webhook or from a browser callback.
+Each Discord user has a separate persistent credit balance. Orders reserve credits before entering the queue and automatically refund them if the provider rejects the order. Crypto deposits are optional and use NOWPayments IPN signature verification; the bot never credits a payment from an unsigned webhook or from a browser callback. The service browser includes platform filters for TikTok, YouTube, Twitch and other detected platforms, and clearly separates provider pricing from the reseller price.
 
 The API integration uses the [PandaBoost API](https://pandaboost.de). See the [PandaBoost API documentation](https://pandaboost.de) for the provider details.
 
@@ -47,6 +47,8 @@ If startup reports `Missing Access`, verify that `DISCORD_CLIENT_ID` is the Appl
 ## Credits and crypto deposits
 
 The bot stores credits in `DATA_DIR/credits.json`, which is ignored by Git. Set `CREDIT_RATE_DIVISOR` to match the provider's rate unit. With the default value of `1000`, a provider rate of `1.50` and quantity `1000` costs `1.50 USD`.
+
+`PROFIT_PERCENT` controls the reseller margin. For example, `PROFIT_PERCENT=20` turns a provider rate of 1.50 USD per 1,000 units into a customer price of 1.80 USD per 1,000 units. The same customer price is used for credit reservations, so the displayed price and charged amount stay aligned. `CREDIT_RATE_DIVISOR` defines the quantity unit used by the provider rate.
 
 For optional crypto deposits, create a NOWPayments API key and IPN secret, expose `POST /crypto/webhook` through HTTPS, and set `CRYPTO_API_KEY`, `CRYPTO_IPN_SECRET`, `CRYPTO_CALLBACK_URL`, `CRYPTO_PRICE_CURRENCY`, `CRYPTO_PAY_CURRENCY` and `CRYPTO_WEBHOOK_PORT`. Use sandbox mode first. Never expose these secrets or manually mark a deposit as paid.
 

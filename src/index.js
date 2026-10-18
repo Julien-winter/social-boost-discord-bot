@@ -9,6 +9,15 @@ const { BoostApiClient, BoostApiError } = require('./apiClient');
 const { OrderQueue } = require('./queue');
 const { CreditStore } = require('./credits');
 const { NowPaymentsProvider, CryptoProviderError } = require('./cryptoProvider');
+const {
+  customerRate,
+  formatMoney,
+  formatQuantity,
+  formatUnit,
+  normalizePricingConfig,
+  orderCost
+} = require('./pricing');
+const { platformFromService, serviceMatches, servicePlatforms } = require('./serviceCatalog');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -20,11 +29,12 @@ const config = {
   rateMax: Number(process.env.RATE_LIMIT_MAX_REQUESTS || 8)
   ,creditCurrency: process.env.CREDIT_CURRENCY || 'USD'
   ,creditDivisor: Number(process.env.CREDIT_RATE_DIVISOR || 1000)
+  ,profitPercent: Number(process.env.PROFIT_PERCENT || 0)
   ,dataDir: process.env.DATA_DIR || 'data'
   ,cryptoPort: Number(process.env.CRYPTO_WEBHOOK_PORT || 0)
   ,cryptoCallbackUrl: process.env.CRYPTO_CALLBACK_URL || ''
 };
-if (!Number.isFinite(config.creditDivisor) || config.creditDivisor <= 0) throw new Error('CREDIT_RATE_DIVISOR must be a positive number.');
+normalizePricingConfig({ divisor: config.creditDivisor, profitPercent: config.profitPercent });
 if (!config.token || !config.clientId) throw new Error('DISCORD_TOKEN and DISCORD_CLIENT_ID must be set.');
 
 const api = new BoostApiClient({ apiKey: process.env.BOOST_API_KEY, apiUrl: process.env.BOOST_API_URL });
@@ -52,6 +62,11 @@ function safe(value) { return String(value ?? '').slice(0, 1000); }
 function limitText(value, max = 1900) {
   const text = String(value ?? '');
   return text.length <= max ? text : `${text.slice(0, max - 20)}\n…and more items.`;
+}
+function servicePriceText(service) {
+  const providerRate = Number(service.rate);
+  const sellRate = customerRate(providerRate, config.profitPercent);
+  return `Provider: **${formatMoney(providerRate, config.creditCurrency)} / ${formatUnit(config.creditDivisor)}**\nYour price: **${formatMoney(sellRate, config.creditCurrency)} / ${formatUnit(config.creditDivisor)}**`;
 }
 function errorText(error) {
   if (error?.code === 'INSUFFICIENT_CREDITS') return error.message;
@@ -158,12 +173,18 @@ function depositModal() {
     new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount in USD').setPlaceholder('Example: 10').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(12))
   );
 }
-function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery) {
+function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery, platforms, platform) {
   const categoryOptions = [{ label: 'All categories', value: 'category:all', description: 'Show every available service', default: categoryIndex === null }]
     .concat(categories.slice(0, 24).map((category, index) => ({
       label: safe(category).slice(0, 100), value: `category:${index}`, description: 'Filter services in this category', default: categoryIndex === index
     })));
   return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('services_platform').setPlaceholder('Choose a platform').addOptions(
+        [{ label: 'All platforms', value: 'platform:all', description: 'Show TikTok, YouTube, Twitch and more', default: platform === null }]
+          .concat(platforms.slice(0, 24).map((item) => ({ label: item, value: `platform:${item}`, description: `Show ${item} services`, default: platform === item })))
+      ).setMaxValues(1).setMinValues(1)
+    ),
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId('services_category').setPlaceholder('Filter by category').addOptions(categoryOptions).setMaxValues(1).setMinValues(1)
     ),
@@ -174,7 +195,7 @@ function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('services_search').setLabel(hasQuery ? 'Change search' : 'Search services').setEmoji('🔎').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('services_reset').setLabel('Reset filters').setEmoji('↩️').setStyle(ButtonStyle.Secondary).setDisabled(categoryIndex === null && !hasQuery)
+      new ButtonBuilder().setCustomId('services_reset').setLabel('Reset filters').setEmoji('↩️').setStyle(ButtonStyle.Secondary).setDisabled(categoryIndex === null && platform === null && !hasQuery)
     )
   ];
 }
@@ -197,28 +218,31 @@ async function showServices(interaction, requestedPage = 0) {
   const services = await api.services();
   if (!services.length) return interaction.editReply({ content: 'No services found.', embeds: [], components: [] });
   const categories = [...new Set(services.map((service) => String(service.category || 'Other')).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const view = serviceViews.get(interaction.user.id) || { categoryIndex: null, query: '' };
+  const view = serviceViews.get(interaction.user.id) || { categoryIndex: null, platform: null, query: '' };
   const selectedCategory = view.categoryIndex === null ? null : categories[view.categoryIndex];
+  const selectedPlatform = view.platform || null;
   const query = view.query.trim().toLowerCase();
-  const filtered = services.filter((service) => {
-    const inCategory = !selectedCategory || String(service.category || 'Other') === selectedCategory;
-    const haystack = `${service.service} ${service.name || ''} ${service.category || ''} ${service.type || ''}`.toLowerCase();
-    return inCategory && (!query || haystack.includes(query));
-  });
+  const platforms = servicePlatforms(services);
+  const filtered = services.filter((service) => serviceMatches(service, { platform: selectedPlatform, category: selectedCategory, query }));
   const pageSize = 6;
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(Math.max(Number(requestedPage) || 0, 0), pageCount - 1);
   const fields = filtered.slice(page * pageSize, (page + 1) * pageSize).map((service) => ({
     name: `#${service.service} · ${safe(service.name).slice(0, 80)}`,
-    value: `**${safe(service.category)}** · ${service.min}-${service.max} · **${service.rate}**${service.refill ? ' · 🔁' : ''}${service.cancel ? ' · ✖️' : ''}`,
+    value: [
+      `Platform: **${platformFromService(service)}** · Type: **${safe(service.type || 'Default')}**`,
+      `Quantity: **${formatQuantity(service.min)}–${formatQuantity(service.max)} units**`,
+      servicePriceText(service),
+      `Features: ${service.refill ? '🔁 Refill' : 'No refill'} · ${service.cancel ? '✖️ Cancel' : 'No cancel'}`
+    ].join('\n'),
     inline: false
   }));
-  const filterLabel = [selectedCategory, query ? `search: “${safe(view.query).slice(0, 40)}”` : ''].filter(Boolean).join(' · ') || 'All categories';
+  const filterLabel = [selectedPlatform || 'All platforms', selectedCategory || 'All categories', query ? `Search: “${safe(view.query).slice(0, 40)}”` : ''].filter(Boolean).join(' · ');
   const description = filtered.length
-    ? `**${filterLabel}**\nShowing ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, filtered.length)} of ${filtered.length} matching services.\nUse **/order** with the service ID, or use the search and category filters below.`
-    : `**${filterLabel}**\nNo matching services. Try another category or search term.`;
-  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Service browser').setDescription(description).addFields(fields).setFooter({ text: `${services.length} total services · 🔁 refill · ✖️ cancel` });
-  const payload = { embeds: [embed], components: servicePageRows(page, pageCount, categories, view.categoryIndex, Boolean(query)) };
+    ? `**${filterLabel}**\nShowing services **${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filtered.length)}** of **${filtered.length}**.\n\n**How to read prices:** quantity is the number of boosts; prices are shown per ${formatUnit(config.creditDivisor)}. The customer price includes the configured ${config.profitPercent}% profit margin. Use **/order** with the service ID.`
+    : `**${filterLabel}**\nNo matching services. Try another platform, category or search term.`;
+  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Service browser').setDescription(description).addFields(fields).setFooter({ text: `${services.length} total services · Profit margin: ${config.profitPercent}% · 🔁 refill · ✖️ cancel` });
+  const payload = { embeds: [embed], components: servicePageRows(page, pageCount, categories, view.categoryIndex, Boolean(query), platforms, selectedPlatform) };
   // The initial browser is private. Later filters and pagination edit that
   // private response after acknowledging the interaction immediately.
   await interaction.editReply(payload);
@@ -237,10 +261,10 @@ async function createOrder(interaction, order) {
   const quantity = Number(order.quantity);
   const runs = Number(order.runs || 1);
   if (quantity < Number(service.min) || quantity > Number(service.max)) return interaction.editReply({ content: `Quantity must be between ${service.min} and ${service.max}.` });
-  const amount = Number(service.rate) * quantity * runs / config.creditDivisor;
+  const amount = orderCost(service.rate, quantity, runs, { divisor: config.creditDivisor, profitPercent: config.profitPercent });
   const reservation = await credits.reserve(interaction.user.id, amount, { service: order.service, quantity, runs });
   const item = queue.enqueue({ userId: interaction.user.id, order, reservationId: reservation.id, creditAmount: reservation.amount });
-  await interaction.editReply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\`\nReserved **${reservation.amount.toFixed(2)} ${config.creditCurrency}** · Remaining credits: **${reservation.balance.toFixed(2)} ${config.creditCurrency}**` });
+  await interaction.editReply({ content: `Added to the queue. Ticket: \`${item.id.slice(0, 8)}\`\nQuantity: **${formatQuantity(quantity * runs)} boosts** · Customer price: **${formatMoney(reservation.amount, config.creditCurrency)}** (includes ${config.profitPercent}% profit)\nRemaining credits: **${formatMoney(reservation.balance, config.creditCurrency)}**` });
 }
 async function showBalance(interaction) {
   if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
@@ -309,7 +333,7 @@ client.on(Events.Error, (error) => console.error('Discord client error:', error)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === 'panel') return interaction.reply({ embeds: [panelEmbed()], components: panelRows() });
+      if (interaction.commandName === 'panel') return interaction.reply({ embeds: [panelEmbed()], components: panelRows(), flags: MessageFlags.Ephemeral });
       if (interaction.commandName === 'services') return showServices(interaction);
       if (interaction.commandName === 'credits') return showCredits(interaction);
       if (interaction.commandName === 'deposit') return createDeposit(interaction, interaction.options.getNumber('amount'));
@@ -329,7 +353,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton()) {
       if (interaction.customId === 'panel_services') return showServices(interaction);
       if (interaction.customId === 'services_search') return interaction.showModal(servicesSearchModal());
-      if (interaction.customId === 'services_reset') { serviceViews.set(interaction.user.id, { categoryIndex: null, query: '' }); return showServices(interaction); }
+      if (interaction.customId === 'services_reset') { serviceViews.set(interaction.user.id, { categoryIndex: null, platform: null, query: '' }); return showServices(interaction); }
       if (interaction.customId.startsWith('services_page_prev_')) return showServices(interaction, Number(interaction.customId.split('_').pop()) - 1);
       if (interaction.customId.startsWith('services_page_next_')) return showServices(interaction, Number(interaction.customId.split('_').pop()) + 1);
       if (interaction.customId === 'panel_order') return interaction.showModal(orderModal());
@@ -345,7 +369,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.isStringSelectMenu() && interaction.customId === 'services_category') {
       const value = interaction.values[0] || 'category:all';
-      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || {}), categoryIndex: value === 'category:all' ? null : Number(value.split(':')[1]), query: serviceViews.get(interaction.user.id)?.query || '' });
+      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || {}), categoryIndex: value === 'category:all' ? null : Number(value.split(':')[1]), platform: serviceViews.get(interaction.user.id)?.platform || null, query: serviceViews.get(interaction.user.id)?.query || '' });
+      return showServices(interaction);
+    }
+    if (interaction.isStringSelectMenu() && interaction.customId === 'services_platform') {
+      const value = interaction.values[0] || 'platform:all';
+      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || {}), categoryIndex: null, platform: value === 'platform:all' ? null : value.slice('platform:'.length), query: serviceViews.get(interaction.user.id)?.query || '' });
       return showServices(interaction);
     }
     if (interaction.isModalSubmit() && interaction.customId === 'order_modal') {
@@ -361,7 +390,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return createDeposit(interaction, amount);
     }
     if (interaction.isModalSubmit() && interaction.customId === 'services_search_modal') {
-      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || { categoryIndex: null }), query: interaction.fields.getTextInputValue('query') || '' });
+      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || { categoryIndex: null, platform: null }), query: interaction.fields.getTextInputValue('query') || '' });
       return showServices(interaction);
     }
   } catch (error) {

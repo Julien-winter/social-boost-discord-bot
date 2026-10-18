@@ -8,6 +8,8 @@ const { CreditStore } = require('../src/credits');
 const { NowPaymentsProvider } = require('../src/cryptoProvider');
 const { OrderQueue } = require('../src/queue');
 const { BoostApiClient } = require('../src/apiClient');
+const { customerRate, orderCost, normalizePricingConfig } = require('../src/pricing');
+const { platformFromService, serviceMatches, servicePlatforms } = require('../src/serviceCatalog');
 
 function tempFile() {
   return path.join(os.tmpdir(), `social-boost-credits-${process.pid}-${Date.now()}.json`);
@@ -94,4 +96,24 @@ test('queue clear removes only failed items', async () => {
 test('API client rejects placeholder and invalid endpoints', () => {
   assert.throws(() => new BoostApiClient({ apiKey: 'key', apiUrl: 'https://your-provider.example/api/v2' }), /placeholder/);
   assert.throws(() => new BoostApiClient({ apiKey: 'key', apiUrl: 'file:///tmp/api' }), /valid HTTP or HTTPS/);
+});
+
+test('reseller pricing applies the configured profit margin consistently', () => {
+  assert.equal(customerRate(1.5, 20), 1.8);
+  assert.equal(orderCost(1.5, 1000, 1, { divisor: 1000, profitPercent: 20 }), 1.8);
+  assert.equal(orderCost(1.5, 2500, 2, { divisor: 1000, profitPercent: 20 }), 9);
+  assert.deepEqual(normalizePricingConfig({ divisor: 1000, profitPercent: 25 }), { divisor: 1000, profitPercent: 25 });
+  assert.throws(() => normalizePricingConfig({ divisor: 1000, profitPercent: -1 }), /between 0/);
+});
+
+test('service catalog detects and filters platforms', () => {
+  const services = [
+    { service: 1, name: 'TikTok followers', category: 'Social' },
+    { service: 2, name: 'YouTube views', category: 'Video' },
+    { service: 3, name: 'Twitch live viewers', category: 'Streaming' }
+  ];
+  assert.equal(platformFromService(services[0]), 'TikTok');
+  assert.deepEqual(servicePlatforms(services), ['TikTok', 'Twitch', 'YouTube']);
+  assert.equal(serviceMatches(services[0], { platform: 'TikTok' }), true);
+  assert.equal(serviceMatches(services[1], { platform: 'TikTok' }), false);
 });

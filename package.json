@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/apiClient.js && node --check src/queue.js && node --check src/credits.js && node --check src/cryptoProvider.js",
+    "check": "node --check src/index.js && node --check src/apiClient.js && node --check src/queue.js && node --check src/credits.js && node --check src/cryptoProvider.js && node --check src/pricing.js && node --check src/serviceCatalog.js",
     "test": "node --test test/*.test.js"
   },
   "engines": { "node": ">=20" },
