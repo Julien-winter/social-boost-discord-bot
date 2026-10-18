@@ -22,6 +22,7 @@ const api = new BoostApiClient({ apiKey: process.env.BOOST_API_KEY, apiUrl: proc
 const queue = new OrderQueue(api, { concurrency: process.env.QUEUE_CONCURRENCY });
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const rateBuckets = new Map();
+const serviceViews = new Map();
 
 function isAdmin(interaction) {
   if (config.adminUsers.has(interaction.user.id)) return true;
@@ -129,28 +130,59 @@ function orderModal() {
 function statusModal() {
   return new ModalBuilder().setCustomId('status_modal').setTitle('Order status').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('order').setLabel('Order ID').setStyle(TextInputStyle.Short).setRequired(true)));
 }
-function servicePageRows(page, pageCount) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`panel_services_page_${page - 1}`).setLabel('Previous').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-    new ButtonBuilder().setCustomId(`panel_services_page_${page + 1}`).setLabel(`${page + 1} / ${pageCount}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-    new ButtonBuilder().setCustomId(`panel_services_page_${page + 1}`).setLabel('Next').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= pageCount - 1)
-  );
+function servicePageRows(page, pageCount, categories, categoryIndex, hasQuery) {
+  const categoryOptions = [{ label: 'All categories', value: 'category:all', description: 'Show every available service', default: categoryIndex === null }]
+    .concat(categories.slice(0, 24).map((category, index) => ({
+      label: safe(category).slice(0, 100), value: `category:${index}`, description: 'Filter services in this category', default: categoryIndex === index
+    })));
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId('services_category').setPlaceholder('Filter by category').addOptions(categoryOptions).setMaxValues(1).setMinValues(1)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`services_page_prev_${page}`).setLabel('Previous').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+      new ButtonBuilder().setCustomId(`services_page_info_${page}`).setLabel(`Page ${page + 1} / ${pageCount}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+      new ButtonBuilder().setCustomId(`services_page_next_${page}`).setLabel('Next').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= pageCount - 1)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('services_search').setLabel(hasQuery ? 'Change search' : 'Search services').setEmoji('🔎').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('services_reset').setLabel('Reset filters').setEmoji('↩️').setStyle(ButtonStyle.Secondary).setDisabled(categoryIndex === null && !hasQuery)
+    )
+  ];
 }
 async function showServices(interaction, requestedPage = 0) {
   const services = await api.services();
   if (!services.length) return interaction.reply({ content: 'No services found.', flags: MessageFlags.Ephemeral });
-  const pageSize = 8;
-  const pageCount = Math.max(1, Math.ceil(services.length / pageSize));
+  const categories = [...new Set(services.map((service) => String(service.category || 'Other')).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const view = serviceViews.get(interaction.user.id) || { categoryIndex: null, query: '' };
+  const selectedCategory = view.categoryIndex === null ? null : categories[view.categoryIndex];
+  const query = view.query.trim().toLowerCase();
+  const filtered = services.filter((service) => {
+    const inCategory = !selectedCategory || String(service.category || 'Other') === selectedCategory;
+    const haystack = `${service.service} ${service.name || ''} ${service.category || ''} ${service.type || ''}`.toLowerCase();
+    return inCategory && (!query || haystack.includes(query));
+  });
+  const pageSize = 6;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(Math.max(Number(requestedPage) || 0, 0), pageCount - 1);
-  const fields = services.slice(page * pageSize, (page + 1) * pageSize).map((service) => ({
-    name: `#${service.service} · ${safe(service.name).slice(0, 90)}`,
-    value: `**Category:** ${safe(service.category)}\n**Range:** ${service.min}-${service.max}\n**Rate:** ${service.rate}${service.refill ? ' · 🔁 Refill' : ''}${service.cancel ? ' · ✖️ Cancel' : ''}`,
-    inline: true
+  const fields = filtered.slice(page * pageSize, (page + 1) * pageSize).map((service) => ({
+    name: `#${service.service} · ${safe(service.name).slice(0, 80)}`,
+    value: `**${safe(service.category)}** · ${service.min}-${service.max} · **${service.rate}**${service.refill ? ' · 🔁' : ''}${service.cancel ? ' · ✖️' : ''}`,
+    inline: false
   }));
-  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Available services').setDescription(`Showing services ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, services.length)} of ${services.length}. Use /order with the service ID.`).addFields(fields).setFooter({ text: 'Rates and availability come from the API.' });
-  const payload = { embeds: [embed], components: [servicePageRows(page, pageCount)] };
-  if (interaction.isButton()) await interaction.update(payload);
+  const filterLabel = [selectedCategory, query ? `search: “${safe(view.query).slice(0, 40)}”` : ''].filter(Boolean).join(' · ') || 'All categories';
+  const description = filtered.length
+    ? `**${filterLabel}**\nShowing ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, filtered.length)} of ${filtered.length} matching services.\nUse **/order** with the service ID, or use the search and category filters below.`
+    : `**${filterLabel}**\nNo matching services. Try another category or search term.`;
+  const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('📦 Service browser').setDescription(description).addFields(fields).setFooter({ text: `${services.length} total services · 🔁 refill · ✖️ cancel` });
+  const payload = { embeds: [embed], components: servicePageRows(page, pageCount, categories, view.categoryIndex, Boolean(query)) };
+  if (interaction.isButton() || interaction.isStringSelectMenu()) await interaction.update(payload);
   else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+}
+function servicesSearchModal() {
+  return new ModalBuilder().setCustomId('services_search_modal').setTitle('Search services').addComponents(
+    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('query').setLabel('Search by platform, type or keyword').setPlaceholder('Example: TikTok followers').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(80))
+  );
 }
 async function createOrder(interaction, order) {
   if (!allowed(interaction)) return interaction.reply({ content: 'Rate limit reached. Please try again shortly.', flags: MessageFlags.Ephemeral });
@@ -183,7 +215,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (interaction.isButton()) {
       if (interaction.customId === 'panel_services') return showServices(interaction);
-      if (interaction.customId.startsWith('panel_services_page_')) return showServices(interaction, Number(interaction.customId.split('_').pop()));
+      if (interaction.customId === 'services_search') return interaction.showModal(servicesSearchModal());
+      if (interaction.customId === 'services_reset') { serviceViews.set(interaction.user.id, { categoryIndex: null, query: '' }); return showServices(interaction); }
+      if (interaction.customId.startsWith('services_page_prev_')) return showServices(interaction, Number(interaction.customId.split('_').pop()) - 1);
+      if (interaction.customId.startsWith('services_page_next_')) return showServices(interaction, Number(interaction.customId.split('_').pop()) + 1);
       if (interaction.customId === 'panel_order') return interaction.showModal(orderModal());
       if (interaction.customId === 'panel_status') return interaction.showModal(statusModal());
       if (interaction.customId === 'panel_balance') { const result = await api.balance(); return interaction.reply({ content: `Balance: **${safe(result.balance)} ${safe(result.currency)}**`, flags: MessageFlags.Ephemeral }); }
@@ -193,6 +228,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.customId === 'admin_queue') return interaction.reply({ content: queueText(), flags: MessageFlags.Ephemeral });
       if (interaction.customId === 'admin_clear') { queue.clear(); return interaction.update({ content: 'Failed items removed.', embeds: [], components: adminRows() }); }
     }
+    if (interaction.isStringSelectMenu() && interaction.customId === 'services_category') {
+      const value = interaction.values[0] || 'category:all';
+      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || {}), categoryIndex: value === 'category:all' ? null : Number(value.split(':')[1]), query: serviceViews.get(interaction.user.id)?.query || '' });
+      return showServices(interaction);
+    }
     if (interaction.isModalSubmit() && interaction.customId === 'order_modal') {
       const number = (id) => Number(interaction.fields.getTextInputValue(id));
       const quantity = number('quantity');
@@ -200,6 +240,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return createOrder(interaction, { service: number('service'), link: interaction.fields.getTextInputValue('link'), quantity, runs: number('runs') || undefined, interval: number('interval') || undefined });
     }
     if (interaction.isModalSubmit() && interaction.customId === 'status_modal') { const result = await api.orderStatus(interaction.fields.getTextInputValue('order')); return interaction.reply({ content: `\`Status\` ${safe(result.status)} · Remaining: ${safe(result.remains)} · Charge: ${safe(result.charge)}`, flags: MessageFlags.Ephemeral }); }
+    if (interaction.isModalSubmit() && interaction.customId === 'services_search_modal') {
+      serviceViews.set(interaction.user.id, { ...(serviceViews.get(interaction.user.id) || { categoryIndex: null }), query: interaction.fields.getTextInputValue('query') || '' });
+      return showServices(interaction);
+    }
   } catch (error) {
     console.error(error);
     const content = errorText(error);
